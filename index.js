@@ -18,7 +18,7 @@ const pool = new Pool({
 });
 
 function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization']; // e.g. "Bearer TOKEN"
+  const authHeader = req.headers['authorization']; // 
   const token = authHeader && authHeader.split(' ')[1]; // extract token part
   if (!token) return res.status(401).json({ error: 'Access denied. No token provided.' });
 
@@ -33,7 +33,7 @@ function authenticateToken(req, res, next) {
 app.use(express.json()) //make sure to put this at top
 
 //code to check if our db is connected or not, shows the current time in the db if connected
-app.get("/db-check", async (req, res) => {
+app.get("/db-check", async (req, res) => { //try again to see if its conneted before i connect this noose to my neck
   try {
     const result = await pool.query("SELECT NOW()");
     res.json(result.rows[0]);
