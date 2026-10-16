@@ -29,7 +29,6 @@ function authenticateToken(req, res, next) {
   });
 }
 
-
 //This tells Express to parse incoming JSON requests so req.body is defined.
 app.use(express.json()) //make sure to put this at top
 
