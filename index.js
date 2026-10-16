@@ -52,7 +52,7 @@ app.get("/", (req, res) => {
 
 //---LOGIN/SIGNUP---//
 
-//signup route
+//signup route -> no need authentication here, cuz its the first step to get the token
 app.post('/signup', async (req, res) => {
   const { user_email, password } = req.body;
 
