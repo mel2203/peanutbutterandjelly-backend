@@ -17,6 +17,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
+//middleware 
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization']; // 
   const token = authHeader && authHeader.split(' ')[1]; // extract token part
@@ -50,7 +51,7 @@ app.get("/", (req, res) => {
 });
 
 
-//---LOGIN/SIGNUP---//
+//---LOGIN/SIGNUP---// -> wher user gets their token to acces routes that need it
 
 //signup route -> no need authentication here, cuz its the first step to get the token
 app.post('/signup', async (req, res) => {
@@ -128,6 +129,7 @@ app.post('/login', async (req, res) => {
 //---FRIENDSHIP---//
 
 //friend route
+
 app.post('/friend', authenticateToken, async (req, res) => {
   const user_id = req.user.user_id; // from token
 const friend_id = parseInt(req.body.friend_id, 10);
@@ -188,7 +190,7 @@ app.get('/friends', authenticateToken, async (req, res) => {
   }
 });
 
-// list pending requests that other people sent to you
+// list pending requests that other people sent to you (what-if question)
 app.get('/friend/requests', authenticateToken, async (req, res) => {
   const userId = req.user.user_id;
 

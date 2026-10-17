@@ -85,3 +85,4 @@ To make an admin, set `role = 'admin'` in the Supabase `users` table, then log i
 | 403    | Invalid token, or you don't have permission               |
 | 404    | Post, profile or friendship not found                     |
 | 500    | Server error                                              |
+
