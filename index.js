@@ -130,7 +130,7 @@ app.post('/login', async (req, res) => {
 })
 
 //authentication for google 
-//---GOOGLE LOGIN---//
+//---GOOGLE LOGIN---// 
 
 app.post('/auth/google', async (req, res) => {
   const { access_token } = req.body;
