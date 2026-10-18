@@ -132,6 +132,16 @@ app.post('/login', async (req, res) => {
 //authentication for google 
 //---GOOGLE LOGIN---// 
 
+async function createProfileForUser(userId, displayName, email) {
+  const existing = await pool.query('SELECT 1 FROM profiles WHERE user_id = $1', [userId]);
+  if (existing.rows.length > 0) return;
+
+  const name = displayName || email.split('@')[0];
+  const base = name.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20) || 'learner';
+  const username = `${base}${Math.floor(1000 + Math.random() * 9000)}`;
+  await pool.query('INSERT INTO profiles (user_id, username) VALUES ($1, $2)', [userId, username]);
+}
+
 app.post('/auth/google', async (req, res) => {
   const { access_token } = req.body;
   if (!access_token) return res.status(400).json({ error: 'access_token required' });
@@ -166,14 +176,7 @@ app.post('/auth/google', async (req, res) => {
       await pool.query('UPDATE users SET supabase_user_id = $1 WHERE user_id = $2', [supaUser.id, user.user_id]);
     }
 
-    // make sure this user has a profile
-    const profile = await pool.query('SELECT 1 FROM profiles WHERE user_id = $1', [user.user_id]);
-    if (profile.rows.length === 0) {
-      const name = supaUser.user_metadata?.full_name || email.split('@')[0];
-      const base = name.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20) || 'learner';
-      const username = `${base}${Math.floor(1000 + Math.random() * 9000)}`;
-      await pool.query('INSERT INTO profiles (user_id, username) VALUES ($1, $2)', [user.user_id, username]);
-    }
+       await createProfileForUser(user.user_id, supaUser.user_metadata?.full_name, email);
 
     // issue the same kind of token as the normal login route
     const token = jwt.sign({ user_id: user.user_id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1h' });
