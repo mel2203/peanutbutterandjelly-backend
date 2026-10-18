@@ -105,6 +105,10 @@ app.post('/login', async (req, res) => {
     if (user.rows.length === 0) {
       return res.status(401).json({ error: 'Email not found. Please sign up!' });
     }
+    //for accounts that signs in with google.
+        if (!user.rows[0].password) {
+      return res.status(401).json({ error: 'This account uses Google sign-in' });
+    }
     //compare inputted pw with hashed one in db
   const validPass = await bcrypt.compare(password, user.rows[0].password);
     //if not same, send error
@@ -125,6 +129,63 @@ app.post('/login', async (req, res) => {
   }
 })
 
+//authentication for google 
+//---GOOGLE LOGIN---// 
+
+async function createProfileForUser(userId, displayName, email) {
+  const existing = await pool.query('SELECT 1 FROM profiles WHERE user_id = $1', [userId]);
+  if (existing.rows.length > 0) return;
+
+  const name = displayName || email.split('@')[0];
+  const base = name.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20) || 'learner';
+  const username = `${base}${Math.floor(1000 + Math.random() * 9000)}`;
+  await pool.query('INSERT INTO profiles (user_id, username) VALUES ($1, $2)', [userId, username]);
+}
+
+app.post('/auth/google', async (req, res) => {
+  const { access_token } = req.body;
+  if (!access_token) return res.status(400).json({ error: 'access_token required' });
+
+  try {
+    // ask Supabase who this token belongs to
+    const response = await fetch(`${process.env.SUPABASE_URL}/auth/v1/user`, {
+      headers: {
+        Authorization: `Bearer ${access_token}`,
+        apikey: process.env.SUPABASE_ANON_KEY,
+      },
+    });
+    if (!response.ok) return res.status(401).json({ error: 'Invalid Google session' });
+
+    const supaUser = await response.json();
+    const email = supaUser.email;
+    if (!email || !supaUser.email_confirmed_at) {
+      return res.status(401).json({ error: 'Google email could not be verified' });
+    }
+
+    // find the matching user, or create one
+    const found = await pool.query('SELECT * FROM users WHERE user_email = $1', [email]);
+    let user = found.rows[0];
+
+    if (!user) {
+      const created = await pool.query(
+        'INSERT INTO users (user_email, password, supabase_user_id) VALUES ($1, NULL, $2) RETURNING *',
+        [email, supaUser.id]
+      );
+      user = created.rows[0];
+    } else if (!user.supabase_user_id) {
+      await pool.query('UPDATE users SET supabase_user_id = $1 WHERE user_id = $2', [supaUser.id, user.user_id]);
+    }
+
+       await createProfileForUser(user.user_id, supaUser.user_metadata?.full_name, email);
+
+    // issue the same kind of token as the normal login route
+    const token = jwt.sign({ user_id: user.user_id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    res.json({ user_id: user.user_id, role: user.role, token });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Ooops.. Something went wrong' });
+  }
+});
 
 //---FRIENDSHIP---//
 
