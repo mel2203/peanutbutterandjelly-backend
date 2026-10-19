@@ -5,6 +5,8 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const rateLimit = require('express-rate-limit');
 
+const SKILLS = ['Piano', 'Guitar', 'Singing', 'Japanese', 'Korean', 'Spanish', 'Python', 'JavaScript', 'Drawing', 'Mathematics', 'Other'];
+
 const { Pool } = require("pg");
 require("dotenv").config();
 
@@ -378,6 +380,78 @@ const [user_id_1, user_id_2] =
 
 //---POSTS---//
 
+// Return the supported study skills.
+app.get('/skills', authenticateToken, (req, res) => {
+  res.json(SKILLS);
+});
+
+// Return study totals, a skill breakdown, and the current study streak.
+app.get('/stats/me', authenticateToken, async (req, res) => {
+  try {
+    const totals = await pool.query(
+      `SELECT COALESCE(SUM(hours), 0)::float AS total_hours,
+              COUNT(*)::int AS study_count,
+              COALESCE(SUM(hours) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days'), 0)::float AS week_hours
+       FROM posts WHERE user_id = $1 AND hours IS NOT NULL`,
+      [req.user.user_id]
+    );
+    const bySkill = await pool.query(
+      `SELECT skill, SUM(hours)::float AS hours, COUNT(*)::int AS sessions
+       FROM posts WHERE user_id = $1 AND hours IS NOT NULL
+       GROUP BY skill ORDER BY skill`,
+      [req.user.user_id]
+    );
+    const studyDays = await pool.query(
+      `SELECT DISTINCT to_char(created_at AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM-DD') AS day
+       FROM posts WHERE user_id = $1 AND hours IS NOT NULL ORDER BY day DESC`,
+      [req.user.user_id]
+    );
+    const days = new Set(studyDays.rows.map(row => String(row.day).slice(0, 10)));
+    const klDate = date => {
+      const parts = new Intl.DateTimeFormat('en', {
+        timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit'
+      }).formatToParts(date);
+      const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+      return `${values.year}-${values.month}-${values.day}`;
+    };
+    const today = klDate(new Date());
+    const yesterdayDate = new Date(`${today}T00:00:00+08:00`);
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    let cursor = days.has(today) ? today : klDate(yesterdayDate);
+    let streakDays = 0;
+    while (days.has(cursor)) {
+      streakDays++;
+      const previousDate = new Date(`${cursor}T00:00:00+08:00`);
+      previousDate.setDate(previousDate.getDate() - 1);
+      cursor = klDate(previousDate);
+    }
+    res.json({ ...totals.rows[0], streak_days: streakDays, by_skill: bySkill.rows });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Something went wrong' });
+  }
+});
+
+// Return the top 10 users by public study hours, optionally filtered by skill.
+app.get('/leaderboard', authenticateToken, async (req, res) => {
+  const { skill } = req.query;
+  if (skill !== undefined && !SKILLS.includes(skill)) return res.status(400).json({ error: 'Invalid skill' });
+  try {
+    const result = await pool.query(
+      `SELECT p.user_id, pr.username, SUM(p.hours)::float AS total_hours, COUNT(*)::int AS sessions
+       FROM posts p LEFT JOIN profiles pr ON pr.user_id = p.user_id
+       WHERE p.visibility = 'Public' AND p.hours IS NOT NULL
+         AND ($1::text IS NULL OR p.skill = $1)
+       GROUP BY p.user_id, pr.username ORDER BY SUM(p.hours) DESC LIMIT 10`,
+      [skill || null]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Something went wrong' });
+  }
+});
+
 //to retrive all posts, we need to check the user's role and apply visibility and friendship filters accordingly
 app.get('/posts', authenticateToken, async (req, res) => {
   const userId = req.user.user_id;
@@ -461,17 +535,20 @@ app.get("/posts/:id", authenticateToken, async (req, res) => {
 
 //posting a new post.
 app.post("/posts", authenticateToken, async (req, res) => {
-  const { title, content, visibility, image_url } = req.body;
+  const { title, content, visibility, image_url, skill, hours } = req.body;
    const role = req.user.role;
   const owner = role === 'admin' && req.body.user_id ? req.body.user_id : req.user.user_id;
 
 
    if (!visibility) return res.status(400).json({ error: 'visibility required' });
+   if ((skill !== undefined || hours !== undefined) && (skill === undefined || hours === undefined)) return res.status(400).json({ error: 'skill and hours must be provided together' });
+   if (skill !== undefined && !SKILLS.includes(skill)) return res.status(400).json({ error: 'Invalid skill' });
+   if (hours !== undefined && (typeof hours !== 'number' || !Number.isFinite(hours) || hours < 0.25 || hours > 24)) return res.status(400).json({ error: 'hours must be a number between 0.25 and 24' });
 
   try {
     const result = await pool.query(
-      "INSERT INTO posts (title, content, user_id, visibility, image_url) VALUES ($1, $2, $3, $4, $5) RETURNING *",
-      [title, content, owner, visibility, image_url],
+      "INSERT INTO posts (title, content, user_id, visibility, image_url, skill, hours) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
+      [title, content, owner, visibility, image_url, skill ?? null, hours ?? null],
     );
 
     res.status(201).json(result.rows[0]);
@@ -484,9 +561,12 @@ app.post("/posts", authenticateToken, async (req, res) => {
 //updating an existing post
 app.patch("/posts/:id", authenticateToken, async (req, res) => {
   const { id } = req.params;
-  const { title, content, visibility, image_url } = req.body;
+  const { title, content, visibility, image_url, skill, hours } = req.body;
   const userId = req.user.user_id;
   const role = req.user.role;
+  if ((skill !== undefined || hours !== undefined) && (skill === undefined || hours === undefined)) return res.status(400).json({ error: 'skill and hours must be provided together' });
+  if (skill !== undefined && !SKILLS.includes(skill)) return res.status(400).json({ error: 'Invalid skill' });
+  if (hours !== undefined && (typeof hours !== 'number' || !Number.isFinite(hours) || hours < 0.25 || hours > 24)) return res.status(400).json({ error: 'hours must be a number between 0.25 and 24' });
 
   try {
      // Get the post to check ownership
@@ -507,9 +587,11 @@ app.patch("/posts/:id", authenticateToken, async (req, res) => {
    SET title = COALESCE($1, title),
        content = COALESCE($2, content),
        visibility = COALESCE($3, visibility),
-       image_url = COALESCE($4, image_url)
-   WHERE post_id = $5 RETURNING *`,
-      [title, content, visibility, image_url, id],
+       image_url = COALESCE($4, image_url),
+       skill = COALESCE($5, skill),
+       hours = COALESCE($6, hours)
+   WHERE post_id = $7 RETURNING *`,
+      [title, content, visibility, image_url, skill, hours, id],
     );
 
     if (result.rows.length === 0) {
