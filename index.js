@@ -1,6 +1,9 @@
 const express = require("express");
 const path = require("path");
 const app = express();
+const multer = require('multer');
+const { createClient } = require('@supabase/supabase-js');
+const rateLimit = require('express-rate-limit');
 
 const { Pool } = require("pg");
 require("dotenv").config();
@@ -12,6 +15,38 @@ app.use(express.json());
 const bcrypt = require('bcryptjs'); //for hashing
 const jwt = require('jsonwebtoken'); //tokens for succesful signup/login
 
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+// allowed image types and the file extension to use for each
+const ALLOWED_IMAGE_TYPES = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/avif': 'avif',
+};
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_IMAGE_TYPES[file.mimetype]) cb(null, true);
+    else cb(new Error('Only JPG, PNG, WebP, GIF or AVIF images are allowed'));
+  },
+});
+
+// limit uploads per logged-in user: 20 uploads every 15 minutes
+const uploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  keyGenerator: (req) => String(req.user.user_id),
+  message: { error: 'Too many uploads. Please try again in a few minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
@@ -570,6 +605,29 @@ app.patch('/profiles', authenticateToken, async (req, res) => {
   }
 });
 
+//---IMAGE UPLOAD---//
+
+app.post('/upload', authenticateToken, uploadLimiter, (req, res) => {
+  upload.single('image')(req, res, async (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: 'image file required' });
+
+    const ext = ALLOWED_IMAGE_TYPES[req.file.mimetype];
+    const filePath = `${req.user.user_id}/${Date.now()}.${ext}`;
+
+    const { error } = await supabase.storage
+      .from('post-images')
+      .upload(filePath, req.file.buffer, { contentType: req.file.mimetype });
+
+    if (error) {
+      console.error(error);
+      return res.status(500).json({ error: 'Upload failed' });
+    }
+
+    const { data } = supabase.storage.from('post-images').getPublicUrl(filePath);
+    res.status(201).json({ image_url: data.publicUrl });
+  });
+});
 
 const PORT = process.env.PORT || 3000;
 
