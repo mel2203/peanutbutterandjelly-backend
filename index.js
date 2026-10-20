@@ -378,6 +378,34 @@ const [user_id_1, user_id_2] =
   }
 });
 
+// search profiles by username (used to find people to add as friends)
+app.get('/profiles', authenticateToken, async (req, res) => {
+  const search = (req.query.search || '').trim();
+  if (search.length < 2) {
+    return res.status(400).json({ error: 'Search must be at least 2 characters' });
+  }
+
+  try {
+    // escape LIKE wildcards so a user can't search with % or _
+    const pattern = `%${search.replace(/[\\%_]/g, '\\$&')}%`;
+    const result = await pool.query(
+      `SELECT user_id, username, city
+       FROM profiles
+       WHERE username ILIKE $1 AND user_id != $2
+       ORDER BY username
+       LIMIT 20`,
+      [pattern, req.user.user_id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Something went wrong' });
+  }
+});
+
+
+
+
 //---POSTS---//
 
 // Return the supported study skills.
