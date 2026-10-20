@@ -462,7 +462,7 @@ app.get('/posts', authenticateToken, async (req, res) => {
     if (role === 'admin') {
       // Admins can see all posts, so no filters are applied
   result = await pool.query(
-    `SELECT p.*, pr.username
+    `SELECT p.*, pr.username, pr.avatar_url
      FROM posts p
      LEFT JOIN profiles pr ON pr.user_id = p.user_id
      ORDER BY p.created_at DESC`
@@ -470,7 +470,7 @@ app.get('/posts', authenticateToken, async (req, res) => {
 } else {
   // For regular users, apply visibility and friendship filters
   result = await pool.query(
-    `SELECT p.*, pr.username
+    `SELECT p.*, pr.username, pr.avatar_url
      FROM posts p
      LEFT JOIN profiles pr ON pr.user_id = p.user_id
      WHERE p.visibility = 'Public'
@@ -651,13 +651,13 @@ app.get('/profiles/:user_id', authenticateToken, async (req, res) => {
 
 // create your own profile
 app.post('/profiles', authenticateToken, async (req, res) => {
-  const { username, age, bio, city } = req.body;
+  const { username, age, bio, city, avatar_url } = req.body;
   if (!username) return res.status(400).json({ error: 'username required' });
 
   try {
     const result = await pool.query(
-      'INSERT INTO profiles (user_id, username, age, bio, city) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [req.user.user_id, username, age, bio, city]
+      'INSERT INTO profiles (user_id, username, age, bio, city, avatar_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [req.user.user_id, username, age, bio, city, avatar_url]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -668,16 +668,17 @@ app.post('/profiles', authenticateToken, async (req, res) => {
 
 // update your own profile
 app.patch('/profiles', authenticateToken, async (req, res) => {
-  const { username, age, bio, city } = req.body;
+  const { username, age, bio, city, avatar_url } = req.body;
   try {
     const result = await pool.query(
       `UPDATE profiles
        SET username = COALESCE($1, username),
            age = COALESCE($2, age),
            bio = COALESCE($3, bio),
-           city = COALESCE($4, city)
-       WHERE user_id = $5 RETURNING *`,
-      [username, age, bio, city, req.user.user_id]
+           city = COALESCE($4, city),
+           avatar_url = COALESCE($5, avatar_url)
+       WHERE user_id = $6 RETURNING *`,
+      [username, age, bio, city, avatar_url, req.user.user_id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Profile not found' });
     res.json(result.rows[0]);
